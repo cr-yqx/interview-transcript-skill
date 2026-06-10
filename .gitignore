@@ -1,0 +1,22 @@
+__pycache__/
+*.pyc
+.DS_Store
+
+# Local transcription artifacts
+output/
+*.wav
+*.mp4
+*.m4a
+*.mp3
+*.json
+*.txt
+*.log
+*_面试文字记录.md
+*_transcript.md
+
+# Local Whisper/runtime caches
+whisper_models/
+whisper_runtime*/
+pip_cache/
+pip_tmp/
+_whisper_models/

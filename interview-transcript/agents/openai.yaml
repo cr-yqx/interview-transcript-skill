@@ -1,0 +1,4 @@
+interface:
+  display_name: "Interview Transcript"
+  short_description: "Transcribe interview audio or video into speaker-labeled Markdown"
+  default_prompt: "Use $interview-transcript to transcribe this interview audio/video into a speaker-labeled Markdown file."
