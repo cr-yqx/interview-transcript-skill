@@ -13,6 +13,8 @@ output/
 *.log
 *_面试文字记录.md
 *_transcript.md
+!interview-transcript/references/
+!interview-transcript/references/glossary.json
 
 # Local Whisper/runtime caches
 whisper_models/

@@ -4,20 +4,22 @@ import argparse
 import json
 import os
 from pathlib import Path
-import shutil
 import sys
+
+
+DEFAULT_FFMPEG_DIRS = [
+    Path(r"C:\Program Files\SOLIDWORKS Corp\SOLIDWORKS\FloXpress\bin"),
+    Path(r"C:\Program Files\BlueStacks_nxt"),
+]
 
 
 def add_paths(package_dir: Path | None, ffmpeg_dir: Path | None) -> None:
     if package_dir:
         sys.path.insert(0, str(package_dir))
-    if ffmpeg_dir:
-        os.environ["PATH"] = str(ffmpeg_dir) + os.pathsep + os.environ.get("PATH", "")
-
-
-def require_ffmpeg() -> None:
-    if not shutil.which("ffmpeg"):
-        raise SystemExit("ffmpeg was not found. Install ffmpeg or pass --ffmpeg-dir.")
+    dirs = [ffmpeg_dir] if ffmpeg_dir else DEFAULT_FFMPEG_DIRS
+    for path in dirs:
+        if path and path.exists():
+            os.environ["PATH"] = str(path) + os.pathsep + os.environ.get("PATH", "")
 
 
 def write_outputs(result: dict, out_dir: Path, stem: str) -> None:
@@ -43,10 +45,7 @@ def main() -> None:
     parser.add_argument("--model-dir", help="Directory for Whisper model weights")
     parser.add_argument("--ffmpeg-dir", help="Directory containing ffmpeg.exe")
     parser.add_argument("--stem", help="Output file stem")
-    parser.add_argument(
-        "--prompt",
-        default="以下是普通话面试录音转写，请使用简体中文，保留产品、实习、项目、技术名词，按原话记录。",
-    )
+    parser.add_argument("--prompt", default="以下是普通话面试录音转写，请使用简体中文，保留产品、实习、项目、技术名词，按原话记录。")
     args = parser.parse_args()
 
     audio = Path(args.audio)
@@ -56,14 +55,9 @@ def main() -> None:
     package_dir = Path(args.package_dir) if args.package_dir else None
     ffmpeg_dir = Path(args.ffmpeg_dir) if args.ffmpeg_dir else None
     add_paths(package_dir, ffmpeg_dir)
-    require_ffmpeg()
 
     import torch
     import whisper
-
-    if not hasattr(whisper, "load_model"):
-        location = getattr(whisper, "__file__", None)
-        raise SystemExit(f"Imported whisper does not expose load_model: {location}")
 
     model_dir = Path(args.model_dir) if args.model_dir else Path(args.out_dir) / "_whisper_models"
     model_dir.mkdir(parents=True, exist_ok=True)

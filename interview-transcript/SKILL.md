@@ -20,11 +20,16 @@ Create a complete interview transcript from a local audio/video file and save it
    - For video, extract audio first.
    - For large WAV files, transcode to 16 kHz mono AAC/M4A before Whisper; this avoids feeding hundreds of MB of PCM directly to the model.
    - Prefer AAC/M4A when MP3 encoders are unavailable.
-5. Try a remote transcription path only if it is already configured and appropriate.
+   - Keep the extracted audio under API/model-friendly size where possible.
+5. Try the existing `transcribe` skill/OpenAI transcription path only if it is already available and appropriate.
 6. If remote transcription is blocked, unavailable, or not desired, use local Whisper through `scripts/run_whisper_transcribe.py`.
 7. Inspect the Whisper JSON for hallucination, repeated filler, incorrect tail segments, or speaker-turn boundary issues.
-8. Generate Markdown with `scripts/format_interview_md.py`; pass manual segment speaker ranges when speaker diarization is unavailable.
-9. Final-check the Markdown and mention any limitations in the final response.
+8. Generate Markdown with `scripts/format_interview_md.py`; pass manual segment speaker ranges when speaker diarization is unavailable. The formatter loads `references/glossary.json` first, then overlays the current job's `corrections.json`.
+9. Create `<job-dir>/glossary_candidates.json` after reviewing the transcript:
+   - `public_terms`: reusable non-sensitive terms from internet, large-model, Agent, product, and robotics interviews.
+   - `local_only_terms`: company names, people names, project names, role details, business parties, URLs, tokens, local paths, and interview-specific content.
+10. Final-check the Markdown with `Get-Content` and mention any limitations in the final response.
+11. If the user confirms skill learning, merge only reviewed `public_terms` into `references/glossary.json`, then sync and push the public skill repo.
 
 ## WAV Prep
 
@@ -34,7 +39,7 @@ For large WAV input, make a job folder and normalize to compact mono M4A before 
 $jobDir = "<workspace>\output\transcribe\<job-id>"
 New-Item -ItemType Directory -Force -Path $jobDir | Out-Null
 
-ffmpeg -y -hide_banner `
+& "<ffmpeg.exe>" -y -hide_banner `
   -i "<source.wav>" `
   -vn -ac 1 -ar 16000 -c:a aac -b:a 64k `
   "$jobDir\interview_audio.m4a"
@@ -46,7 +51,7 @@ If `ffprobe` is unavailable, inspect WAV duration with Python:
 & "<python.exe>" -c "import wave; p=r'<source.wav>'; w=wave.open(p,'rb'); print({'channels':w.getnchannels(),'sample_rate':w.getframerate(),'frames':w.getnframes(),'duration':w.getnframes()/w.getframerate()}); w.close()"
 ```
 
-## Local Whisper
+## Local Whisper Command
 
 Use the bundled script when local Whisper is needed:
 
@@ -56,13 +61,11 @@ $env:PYTHONUTF8 = "1"
   "<audio-or-video-file>" `
   --out-dir "<workspace>\output\transcribe\<job-id>" `
   --model small `
-  --language zh `
-  --package-dir "<workspace>\output\whisper_runtime_sandbox" `
-  --model-dir "<workspace>\output\whisper_models"
+  --language zh
 ```
 
 Notes:
-- Use a Python environment with `torch` installed when possible.
+- Use a Python environment with `torch` installed when possible; the user's `C:\Users\Administrator\anaconda3\envs\ai_study\python.exe` has worked before.
 - Before a long transcription, smoke-test the runtime:
   `python -c "import sys; sys.path.insert(0, r'<package-dir>'); import whisper; print(getattr(whisper,'__file__',None), hasattr(whisper,'load_model'))"`
 - If `whisper` imports as an empty namespace package or `load_model` is missing, reinstall into a fresh project-local target directory.
@@ -96,6 +99,7 @@ If diarized JSON is unavailable, infer speaker turns from content and timestamps
 - Use special splits only for segments that clearly contain both speakers.
 - Apply only high-confidence correction rules for ASR errors, especially names like `Agent`, `Planner`, `OpenAI`, `Anthropic`, `DeepSeek`, `Manus`, `Claude Code`, and `Codex`.
 - Avoid broad substring corrections that can corrupt already-correct terms; for example, do not replace `Agen` with `Agent` because it turns `Agent` into `Agentt`.
+- Keep job-specific fixes in `<job-dir>/corrections.json`; keep reusable, non-sensitive fixes in `references/glossary.json`.
 
 Run:
 
@@ -106,8 +110,9 @@ $env:PYTHONUTF8 = "1"
 & "<python.exe>" "<skill-dir>\scripts\format_interview_md.py" `
   "<whisper-json>" `
   --out "<job-dir>\<job-id>_面试文字记录.md" `
-  --source "<original-audio-or-video-path>" `
-  --turns "<job-dir>\speaker_turns.json"
+  --source "<original-video-path>" `
+  --turns "<job-dir>\speaker_turns.json" `
+  --corrections "<job-dir>\corrections.json"
 ```
 
 The `speaker_turns.json` file should be a list like:
@@ -117,6 +122,51 @@ The `speaker_turns.json` file should be a list like:
   {"start_id": 0, "end_id": 0, "speaker": "面试官"},
   {"start_id": 1, "end_id": 10, "speaker": "候选人"}
 ]
+```
+
+## Glossary Learning
+
+Maintain `references/glossary.json` as a public, reusable, non-sensitive vocabulary and ASR correction file. It is safe for GitHub only when it contains generic professional terms and common transcription mistakes.
+
+After each transcript, write a local candidate file:
+
+```json
+{
+  "public_terms": ["RAG", "Embedding", "BERT", "Agent", "vibe coding", "PRD"],
+  "local_only_terms": ["公司名", "项目名", "面试岗位", "人名", "具体业务方"]
+}
+```
+
+Rules:
+- Put internet, large-model, Agent, product, robotics, and general engineering terms in `public_terms`.
+- Put company names, interview roles, project names, business names, personal identifiers, URLs, account/token names or values, local machine paths, and transcript-specific facts in `local_only_terms`.
+- Do not auto-promote all ASR corrections. Add correction rules to the public glossary only when they are high-confidence, reusable, and non-sensitive.
+- Do not store audio, video, Markdown transcripts, Whisper JSON/TXT, local package paths, model weights, GitHub tokens, API keys, or machine-specific paths in the skill or public repo.
+
+Merge reviewed public terms:
+
+```powershell
+$env:PYTHONUTF8 = "1"
+& "<python.exe>" "<skill-dir>\scripts\update_glossary.py" `
+  "<job-dir>\glossary_candidates.json"
+```
+
+Manually add one safe public ASR correction when needed:
+
+```powershell
+& "<python.exe>" "<skill-dir>\scripts\update_glossary.py" `
+  "<job-dir>\glossary_candidates.json" `
+  --correction "Webcoding=vibe coding"
+```
+
+Sync the local skill to the public GitHub repo after review:
+
+```powershell
+& "<skill-dir>\scripts\sync_skill_repo.ps1" `
+  -RepoRoot "<repo-root>" `
+  -GitPath "<git.exe>" `
+  -CommitMessage "Update glossary for interview transcript skill" `
+  -Push
 ```
 
 ## Validation

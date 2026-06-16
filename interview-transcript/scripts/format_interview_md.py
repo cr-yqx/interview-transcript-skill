@@ -9,13 +9,22 @@ import sys
 
 DEFAULT_CORRECTIONS = {
     "Open AI": "OpenAI",
+    "安斯罗皮克": "Anthropic",
+    "DFc可": "DeepSeek",
     "planer": "Planner",
     "Panner": "Planner",
+    "A型": "Agent",
+    "A线": "Agent",
     "Azint": "Agent",
-    "Deepseek": "DeepSeek",
-    "ClaudeCode": "Claude Code",
-    "Cloud Code": "Claude Code",
+    "codco的和codex": "Claude Code 和 Codex",
+    "Codeco的Codex": "Claude Code 和 Codex",
+    "买二次": "Manus",
+    "马拉斯": "Manus",
+    "minus": "Manus",
 }
+
+SKILL_DIR = Path(__file__).resolve().parents[1]
+DEFAULT_GLOSSARY_PATH = SKILL_DIR / "references" / "glossary.json"
 
 
 def fmt_time(seconds: float) -> str:
@@ -30,6 +39,31 @@ def load_turns(path: Path | None) -> list[dict]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def load_corrections(path: Path, *, required: bool = True) -> dict[str, str]:
+    if not path.exists():
+        if required:
+            raise SystemExit(f"Corrections file not found: {path}")
+        return {}
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise SystemExit(f"Corrections file must be a JSON object: {path}")
+    return {str(source): str(target) for source, target in data.items()}
+
+
+def load_glossary_corrections(path: Path, *, required: bool = False) -> dict[str, str]:
+    if not path.exists():
+        if required:
+            raise SystemExit(f"Glossary file not found: {path}")
+        return {}
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise SystemExit(f"Glossary file must be a JSON object: {path}")
+    corrections = data.get("corrections", {})
+    if not isinstance(corrections, dict):
+        raise SystemExit(f"Glossary corrections must be a JSON object: {path}")
+    return {str(source): str(target) for source, target in corrections.items()}
+
+
 def speaker_for(segment_id: int, turns: list[dict]) -> str:
     for turn in turns:
         if int(turn["start_id"]) <= segment_id <= int(turn["end_id"]):
@@ -40,9 +74,9 @@ def speaker_for(segment_id: int, turns: list[dict]) -> str:
 def clean_text(parts: list[str], corrections: dict[str, str]) -> str:
     text = " ".join(part.strip() for part in parts if part.strip())
     text = re.sub(r"\s+", " ", text)
-    text = re.sub(r"\s+([，。！？、；：,.!?])", r"\1", text)
+    text = re.sub(r"\s+([，。！？、,.?])", r"\1", text)
     text = text.replace(" ,", "，")
-    for source, target in corrections.items():
+    for source, target in sorted(corrections.items(), key=lambda item: len(item[0]), reverse=True):
         text = text.replace(source, target)
     return text.strip()
 
@@ -55,17 +89,6 @@ def add_grouped(grouped: list[dict], speaker: str, start: float, end: float, tex
     grouped.append({"speaker": speaker, "start": start, "end": end, "parts": [text]})
 
 
-def parse_drop_segments(values: list[str]) -> set[int]:
-    dropped: set[int] = set()
-    for value in values:
-        for part in value.split(","):
-            part = part.strip()
-            if not part:
-                continue
-            dropped.add(int(part))
-    return dropped
-
-
 def main() -> None:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -76,18 +99,16 @@ def main() -> None:
     parser.add_argument("--source", help="Original source file path")
     parser.add_argument("--turns", help="JSON file mapping segment ID ranges to speakers")
     parser.add_argument("--title", default="面试文字记录")
+    parser.add_argument("--glossary", help="Optional extra glossary JSON with a corrections object")
+    parser.add_argument("--no-default-glossary", action="store_true", help="Do not load references/glossary.json")
     parser.add_argument("--corrections", help="Optional JSON dictionary of ASR corrections")
-    parser.add_argument("--drop-segment", action="append", default=[], help="Segment ID(s) to omit, comma-separated allowed")
     parser.add_argument("--print-segments", action="store_true", help="Print segment IDs, times, and text, then exit")
     args = parser.parse_args()
 
     json_path = Path(args.json_path)
     data = json.loads(json_path.read_text(encoding="utf-8"))
-    dropped = parse_drop_segments(args.drop_segment)
-
-    segments = [segment for segment in data.get("segments", []) if int(segment.get("id", -1)) not in dropped]
     if args.print_segments:
-        for segment in segments:
+        for segment in data.get("segments", []):
             print(
                 f"{int(segment['id']):03d} "
                 f"{fmt_time(float(segment['start']))}-{fmt_time(float(segment['end']))} "
@@ -99,11 +120,15 @@ def main() -> None:
 
     turns = load_turns(Path(args.turns) if args.turns else None)
     corrections = dict(DEFAULT_CORRECTIONS)
+    if not args.no_default_glossary:
+        corrections.update(load_glossary_corrections(DEFAULT_GLOSSARY_PATH, required=False))
+    if args.glossary:
+        corrections.update(load_glossary_corrections(Path(args.glossary), required=True))
     if args.corrections:
-        corrections.update(json.loads(Path(args.corrections).read_text(encoding="utf-8")))
+        corrections.update(load_corrections(Path(args.corrections), required=True))
 
     grouped: list[dict] = []
-    for segment in segments:
+    for segment in data.get("segments", []):
         text = str(segment.get("text", "")).strip()
         if not text:
             continue
@@ -111,7 +136,7 @@ def main() -> None:
         speaker = speaker_for(segment_id, turns) if turns else "说话人"
         add_grouped(grouped, speaker, float(segment["start"]), float(segment["end"]), text)
 
-    duration = max((float(s.get("end", 0)) for s in segments), default=0)
+    duration = max((float(s.get("end", 0)) for s in data.get("segments", [])), default=0)
     lines = [f"# {args.title}", ""]
     if args.source:
         lines.append(f"- 来源文件：`{args.source}`")
